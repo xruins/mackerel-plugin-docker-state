@@ -70,11 +70,17 @@ func (m *DockerPlugin) FetchMetrics() (map[string]float64, error) {
 	for _, s := range allStatuses {
 		metrics[s] = 0
 	}
+	if m.enableTotal {
+		metrics[MetricNameTotal] = 0
+	}
+	if m.enableFailing {
+		metrics[MetricNameFailing] = 0
+	}
 
 	for _, c := range containers {
 		if _, ok := statesMap[c.State]; ok {
 			metrics[c.State] += 1
-			if _, ok := m.failingStatusMap[c.State]; ok {
+			if _, ok := m.failingStatusMap[c.State]; ok && m.enableFailing {
 				metrics[MetricNameFailing] += 1
 			}
 			continue
@@ -96,11 +102,13 @@ func (m *DockerPlugin) FetchMetrics() (map[string]float64, error) {
 			metricName = MetricNameRunning
 		}
 		metrics[metricName] += 1
-		if _, ok := m.failingStatusMap[metricName]; ok {
+		if _, ok := m.failingStatusMap[metricName]; ok && m.enableFailing {
 			metrics[MetricNameFailing] += 1
 		}
 	}
-	metrics[MetricNameTotal] = float64(len(containers))
+	if m.enableTotal {
+		metrics[MetricNameTotal] = float64(len(containers))
+	}
 	return metrics, nil
 }
 
