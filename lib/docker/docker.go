@@ -52,7 +52,7 @@ func NewDockerPlugin(host, prefix string, enableTotal, enableFailing bool, faili
 }
 
 func (m *DockerPlugin) listContainer() ([]docker.APIContainers, error) {
-	containers, err := m.client.ListContainers(docker.ListContainersOptions{})
+	containers, err := m.client.ListContainers(docker.ListContainersOptions{All: true})
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute listContainers API: %w", err)
 	}
