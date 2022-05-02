@@ -125,7 +125,7 @@ func (m *DockerPlugin) GraphDefinition() map[string]mp.Graphs {
 				{Name: "paused", Label: "Paused", Stacked: true},
 				{Name: "dead", Label: "Dead", Stacked: true},
 				{Name: "total", Label: "Total"},
-				{Name: "failing", Label: "Count of containers in failing state"},
+				{Name: "failing", Label: "Failing"},
 			},
 		},
 	}
