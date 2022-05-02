@@ -67,9 +67,6 @@ func (m *DockerPlugin) FetchMetrics() (map[string]float64, error) {
 	}
 
 	metrics := map[string]float64{}
-	for _, s := range allStatuses {
-		metrics[s] = 0
-	}
 	if m.enableTotal {
 		metrics[MetricNameTotal] = 0
 	}
