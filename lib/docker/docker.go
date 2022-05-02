@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	mp "github.com/mackerelio/go-mackerel-plugin"
 	docker "github.com/fsouza/go-dockerclient"
+	mp "github.com/mackerelio/go-mackerel-plugin"
 )
 
 type dockerClient interface {
@@ -13,18 +13,41 @@ type dockerClient interface {
 }
 
 type DockerPlugin struct {
-	prefix string
-	client dockerClient
+	prefix           string
+	client           dockerClient
+	enableTotal      bool
+	enableFailing    bool
+	failingStatusMap map[string]struct{}
 }
 
-func NewDockerPlugin(host, prefix string) (*DockerPlugin, error) {
+func NewDockerPlugin(host, prefix string, enableTotal, enableFailing bool, failingStatuses []string) (*DockerPlugin, error) {
 	client, err := docker.NewClient(host)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create docker client: %w", err)
 	}
+
+	failingStatusMap := make(map[string]struct{}, len(failingStatuses))
+	for _, s := range failingStatuses {
+		var found bool
+		for _, ps := range allStatuses {
+			if s == ps {
+				found = true
+				break
+			}
+		}
+		if found {
+			failingStatusMap[s] = struct{}{}
+			continue
+		}
+		return nil, fmt.Errorf("invalid failingStatuses. status: %s", s)
+	}
+
 	return &DockerPlugin{
-		client: client,
-		prefix: prefix,
+		client:           client,
+		prefix:           prefix,
+		enableTotal:      enableTotal,
+		enableFailing:    enableFailing,
+		failingStatusMap: failingStatusMap,
 	}, nil
 }
 
@@ -37,22 +60,6 @@ func (m *DockerPlugin) listContainer() ([]docker.APIContainers, error) {
 	return containers, nil
 }
 
-var statesMap map[string]struct{}
-
-func init() {
-	states := []string{
-		"created",
-		"restarting",
-		"exited",
-		"paused",
-		"dead",
-	}
-	statesMap = make(map[string]struct{}, len(states))
-	for _, s := range states {
-		statesMap[s] = struct{}{}
-	}
-}
-
 func (m *DockerPlugin) FetchMetrics() (map[string]float64, error) {
 	containers, err := m.listContainer()
 	if err != nil {
@@ -60,36 +67,48 @@ func (m *DockerPlugin) FetchMetrics() (map[string]float64, error) {
 	}
 
 	metrics := map[string]float64{}
+	for _, s := range allStatuses {
+		metrics[s] = 0
+	}
 
 	for _, c := range containers {
 		if _, ok := statesMap[c.State]; ok {
 			metrics[c.State] += 1
+			if _, ok := m.failingStatusMap[c.State]; ok {
+				metrics[MetricNameFailing] += 1
+			}
 			continue
 		}
 
 		if c.State != MetricNameRunning {
 			return nil, fmt.Errorf("met unknown state of docker container. state: %s", c.State)
 		}
+		var metricName string
 		status := getHealthCheckStatus(c.Status)
 		switch status {
 		case StatusStarting:
-			metrics[MetricNameRunningStarting] += 1
+			metricName = MetricNameRunningStarting
 		case StatusHealthy:
-			metrics[MetricNameRunningHealthy] += 1
+			metricName = MetricNameRunningHealthy
 		case StatusUnhealthy:
-			metrics[MetricNameRunningUnhealthy] += 1
+			metricName = MetricNameRunningUnhealthy
 		default:
-			metrics[MetricNameRunning] += 1
+			metricName = MetricNameRunning
+		}
+		metrics[metricName] += 1
+		if _, ok := m.failingStatusMap[metricName]; ok {
+			metrics[MetricNameFailing] += 1
 		}
 	}
+	metrics[MetricNameTotal] = float64(len(containers))
 	return metrics, nil
 }
 
 func (m *DockerPlugin) GraphDefinition() map[string]mp.Graphs {
 	return map[string]mp.Graphs{
 		"statuses": {
-			Label: m.MetricKeyPrefix() + " Docker Container Statuses",
-			Unit: mp.UnitInteger,
+			Label: m.MetricKeyPrefix() + " Container Statuses",
+			Unit:  mp.UnitInteger,
 			Metrics: []mp.Metrics{
 				{Name: "created", Label: "Created", Stacked: true},
 				{Name: "running", Label: "Running", Stacked: true},
@@ -100,6 +119,8 @@ func (m *DockerPlugin) GraphDefinition() map[string]mp.Graphs {
 				{Name: "exited", Label: "Exited", Stacked: true},
 				{Name: "paused", Label: "Paused", Stacked: true},
 				{Name: "dead", Label: "Dead", Stacked: true},
+				{Name: "total", Label: "Total"},
+				{Name: "failing", Label: "Count of containers in failing state"},
 			},
 		},
 	}
@@ -107,26 +128,6 @@ func (m *DockerPlugin) GraphDefinition() map[string]mp.Graphs {
 func (m *DockerPlugin) MetricKeyPrefix() string {
 	return m.prefix
 }
-
-type Status int
-
-const (
-	StatusUnknown Status = iota
-	StatusStarting
-	StatusHealthy
-	StatusUnhealthy
-)
-
-const (
-	StatusSuffixStarting  = "(health: starting)"
-	StatusSuffixHealthy   = "(healthy)"
-	StatusSuffixUnhealthy = "(unhealthy)"
-
-	MetricNameRunning = "running"
-	MetricNameRunningStarting  = "running_starting"
-	MetricNameRunningHealthy   = "running_healthy"
-	MetricNameRunningUnhealthy = "running_unhealthy"
-)
 
 func getHealthCheckStatus(status string) Status {
 	if strings.HasSuffix(status, StatusSuffixUnhealthy) {
